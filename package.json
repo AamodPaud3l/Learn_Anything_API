@@ -1,0 +1,27 @@
+{
+  "name": "app",
+  "version": "1.0.0",
+  "description": "This is an API built for my custom GPT where users can state what they want to learn (technical) and start learning from scratch. It tracks the user's progress and personalizes the learning based on their commitment.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "dev": "node src/server.js --watch",
+    "start": "node src/server.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git@github.com-personal:AamodPaud3l/Learn_Anything_API.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "cors": "^2.8.6",
+    "dotenv": "^17.2.4",
+    "express": "^5.2.1",
+    "pg": "^8.18.0",
+    "uuid": "^13.0.0",
+    "zod": "^4.3.6"
+  }
+}
