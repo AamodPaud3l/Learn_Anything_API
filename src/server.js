@@ -91,10 +91,10 @@ app.post("/v1/internal/ensure-track", async (req, res) => {
   const schema = z.object({
     slug: z.string().min(2).max(50),
     title: z.string().min(2).max(100),
-    official_sources: z.array(z.string().url()).default([]),
-    track_type: z.enum(["official", "custom"]).default("custom"),
+    official_sources: z.array(z.string().url()).optional(),
+    track_type: z.enum(["official", "custom"]).optional(),
     owner_user_id: z.string().uuid().nullable().optional(),
-    status: z.enum(["draft", "active", "archived"]).default("draft")
+    status: z.enum(["draft", "active", "archived"]).optional()
   });
 
   const parsed = schema.safeParse(req.body);
@@ -102,9 +102,13 @@ app.post("/v1/internal/ensure-track", async (req, res) => {
 
   const payload = parsed.data;
   const slug = payload.slug.toLowerCase();
+  const hasOfficialSources = Object.prototype.hasOwnProperty.call(payload, "official_sources");
+  const hasTrackType = Object.prototype.hasOwnProperty.call(payload, "track_type");
+  const hasOwnerUserId = Object.prototype.hasOwnProperty.call(payload, "owner_user_id");
+  const hasStatus = Object.prototype.hasOwnProperty.call(payload, "status");
 
   try {
-    if (payload.owner_user_id) {
+    if (hasOwnerUserId && payload.owner_user_id) {
       await ensureUser(payload.owner_user_id);
     }
 
@@ -112,21 +116,32 @@ app.post("/v1/internal/ensure-track", async (req, res) => {
 
     const saved = await db.query(
       `INSERT INTO tracks (slug, title, official_sources, track_type, owner_user_id, status)
-       VALUES ($1, $2, $3::jsonb, $4, $5, $6)
+       VALUES (
+         $1,
+         $2,
+         COALESCE($3::jsonb, '[]'::jsonb),
+         COALESCE($4, 'custom'),
+         $5,
+         COALESCE($6, 'draft')
+       )
        ON CONFLICT (slug) DO UPDATE
        SET title = EXCLUDED.title,
-           official_sources = EXCLUDED.official_sources,
-           track_type = EXCLUDED.track_type,
-           owner_user_id = EXCLUDED.owner_user_id,
-           status = EXCLUDED.status
+           official_sources = CASE WHEN $7 THEN EXCLUDED.official_sources ELSE tracks.official_sources END,
+           track_type = CASE WHEN $8 THEN EXCLUDED.track_type ELSE tracks.track_type END,
+           owner_user_id = CASE WHEN $9 THEN EXCLUDED.owner_user_id ELSE tracks.owner_user_id END,
+           status = CASE WHEN $10 THEN EXCLUDED.status ELSE tracks.status END
        RETURNING id, slug, title, official_sources, track_type, owner_user_id, status`,
       [
         slug,
         payload.title,
-        JSON.stringify(payload.official_sources),
-        payload.track_type,
-        payload.owner_user_id ?? null,
-        payload.status
+        hasOfficialSources ? JSON.stringify(payload.official_sources) : null,
+        hasTrackType ? payload.track_type : null,
+        hasOwnerUserId ? payload.owner_user_id : null,
+        hasStatus ? payload.status : null,
+        hasOfficialSources,
+        hasTrackType,
+        hasOwnerUserId,
+        hasStatus
       ]
     );
 
@@ -161,12 +176,13 @@ app.post("/v1/internal/seed-lessons", async (req, res) => {
   if (!track) return res.status(404).json({ error: "Track not found" });
 
   const seeded = [];
+  const client = await db.getClient();
 
   try {
-    await db.query("BEGIN");
+    await client.query("BEGIN");
 
     for (const lesson of payload.lessons) {
-      const upserted = await db.query(
+      const upserted = await client.query(
         `INSERT INTO lessons (track_id, lesson_order, title, objectives, tags, source_urls)
          VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb)
          ON CONFLICT (track_id, lesson_order) DO UPDATE
@@ -187,7 +203,7 @@ app.post("/v1/internal/seed-lessons", async (req, res) => {
       seeded.push(upserted.rows[0]);
     }
 
-    await db.query("COMMIT");
+    await client.query("COMMIT");
 
     return res.status(200).json({
       track: { id: track.id, slug: track.slug, title: track.title },
@@ -195,8 +211,10 @@ app.post("/v1/internal/seed-lessons", async (req, res) => {
       lessons: seeded
     });
   } catch (e) {
-    await db.query("ROLLBACK");
+    await client.query("ROLLBACK");
     return res.status(400).json({ error: "Unable to seed lessons" });
+  } finally {
+    client.release();
   }
 });
 
