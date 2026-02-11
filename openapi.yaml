@@ -1,15 +1,17 @@
 openapi: 3.1.0
 info:
   title: Learn Anything API
-  version: 1.1.0
+  version: 1.2.0
 servers:
-  - url: http://localhost:3000
+  - url: localhost:3000
+
 components:
   securitySchemes:
     AdminKey:
       type: apiKey
       in: header
       name: X-ADMIN-KEY
+
   schemas:
     Track:
       type: object
@@ -24,12 +26,13 @@ components:
           type: string
           enum: [official, custom]
         owner_user_id:
-          type: [string, 'null']
+          type: [string, "null"]
           format: uuid
         status:
           type: string
           enum: [draft, active, archived]
       required: [id, slug, title, official_sources, track_type, status]
+
     LessonSeedInput:
       type: object
       properties:
@@ -45,21 +48,118 @@ components:
           type: array
           items: { type: string, format: uri }
       required: [lesson_order, title]
+
+    MeResponse:
+      type: object
+      properties:
+        user_id: { type: string, format: uuid }
+        attempts_7d: { type: integer }
+        tip: { type: string }
+      required: [user_id]
+
+    NextLessonResponse:
+      type: object
+      properties:
+        user_id: { type: string, format: uuid }
+        track:
+          # Your API may return a full Track or a lighter object.
+          # If it returns full Track, great. If it returns lite, switch this to TrackLite.
+          $ref: "#/components/schemas/Track"
+        next_lesson:
+          type: ["object", "null"]
+          properties:
+            id: { type: string, format: uuid }
+            lesson_order: { type: integer }
+            title: { type: string }
+            objectives:
+              type: array
+              items: { type: string }
+            tags:
+              type: array
+              items: { type: string }
+            source_urls:
+              type: array
+              items: { type: string, format: uri }
+          required: [id, lesson_order, title]
+        message: { type: string }
+      required: [user_id, track, next_lesson]
+
+    SubmitAttemptInput:
+      type: object
+      properties:
+        user_id: { type: string, format: uuid }
+        lesson_id: { type: string, format: uuid }
+        attempt_type:
+          type: string
+          enum: [quiz, challenge, project]
+        score: { type: number }
+        max_score: { type: number }
+        duration_sec: { type: integer }
+        weak_tags:
+          type: array
+          items: { type: string }
+      required: [lesson_id, attempt_type]
+
+    SubmitAttemptResponse:
+      type: object
+      properties:
+        user_id: { type: string, format: uuid }
+        attempt_id: { type: string, format: uuid }
+        saved_at: { type: string }
+        advanced: { type: boolean }
+      required: [user_id, attempt_id, saved_at, advanced]
+
 paths:
   /health:
     get:
       operationId: getHealth
       summary: Health check
       responses:
-        '200':
+        "200":
           description: API status
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean }
+                  message: { type: string }
+
+  /v1/me:
+    get:
+      operationId: getMe
+      summary: Get or create the current user (MVP via optional user_id query param)
+      parameters:
+        - in: query
+          name: user_id
+          required: false
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: User info
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MeResponse"
+
   /v1/tracks:
     get:
       operationId: listTracks
       summary: List tracks
       responses:
-        '200':
+        "200":
           description: Tracks list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tracks:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Track"
     post:
       operationId: createTrack
       summary: Create a track
@@ -77,20 +177,22 @@ paths:
                   items: { type: string, format: uri }
               required: [slug, title]
       responses:
-        '201':
+        "201":
           description: Track created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  track:
+                    $ref: "#/components/schemas/Track"
+
   /v1/internal/ensure-track:
     post:
       operationId: ensureTrack
-      summary: Create or update a track by slug
+      summary: Create or update a track by slug (internal)
       security:
         - AdminKey: []
-      parameters:
-        - in: header
-          name: X-ADMIN-KEY
-          required: true
-          schema:
-            type: string
       requestBody:
         required: true
         content:
@@ -107,14 +209,14 @@ paths:
                   type: string
                   enum: [official, custom]
                 owner_user_id:
-                  type: [string, 'null']
+                  type: [string, "null"]
                   format: uuid
                 status:
                   type: string
                   enum: [draft, active, archived]
               required: [slug, title]
       responses:
-        '200':
+        "200":
           description: Track updated
           content:
             application/json:
@@ -123,23 +225,26 @@ paths:
                 properties:
                   created: { type: boolean }
                   track:
-                    $ref: '#/components/schemas/Track'
-        '201':
+                    $ref: "#/components/schemas/Track"
+        "201":
           description: Track created
-        '401':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  created: { type: boolean }
+                  track:
+                    $ref: "#/components/schemas/Track"
+        "401":
           description: Missing or invalid admin key
+
   /v1/internal/seed-lessons:
     post:
       operationId: seedLessons
-      summary: Seed or upsert lessons for a track
+      summary: Seed or upsert lessons for a track (internal)
       security:
         - AdminKey: []
-      parameters:
-        - in: header
-          name: X-ADMIN-KEY
-          required: true
-          schema:
-            type: string
       requestBody:
         required: true
         content:
@@ -152,12 +257,81 @@ paths:
                   type: array
                   minItems: 1
                   items:
-                    $ref: '#/components/schemas/LessonSeedInput'
+                    $ref: "#/components/schemas/LessonSeedInput"
               required: [track_slug, lessons]
       responses:
-        '200':
+        "200":
           description: Lessons seeded
-        '401':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  track:
+                    type: object
+                    properties:
+                      id: { type: string, format: uuid }
+                      slug: { type: string }
+                      title: { type: string }
+                    required: [id, slug, title]
+                  inserted_or_updated: { type: integer }
+                  lessons:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string, format: uuid }
+                        lesson_order: { type: integer }
+                        title: { type: string }
+                      required: [id, lesson_order, title]
+        "401":
           description: Missing or invalid admin key
-        '404':
+        "404":
           description: Track not found
+
+  /v1/lessons/next:
+    get:
+      operationId: getNextLesson
+      summary: Get next lesson for a user in a track
+      parameters:
+        - in: query
+          name: track
+          required: true
+          schema: { type: string }
+        - in: query
+          name: user_id
+          required: false
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Next lesson
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/NextLessonResponse"
+        "404":
+          description: Track not found
+
+  /v1/attempts:
+    post:
+      operationId: submitAttempt
+      summary: Submit a quiz/challenge/project attempt and store progress
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SubmitAttemptInput"
+      responses:
+        "200":
+          description: Attempt saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubmitAttemptResponse"
+        "400":
+          description: Invalid input
+        "404":
+          description: Lesson not found
