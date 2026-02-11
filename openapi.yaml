@@ -48,17 +48,20 @@ components:
 paths:
   /health:
     get:
+      operationId: getHealth
       summary: Health check
       responses:
         '200':
           description: API status
   /v1/tracks:
     get:
+      operationId: listTracks
       summary: List tracks
       responses:
         '200':
           description: Tracks list
     post:
+      operationId: createTrack
       summary: Create a track
       requestBody:
         required: true
@@ -78,6 +81,7 @@ paths:
           description: Track created
   /v1/internal/ensure-track:
     post:
+      operationId: ensureTrack
       summary: Create or update a track by slug
       security:
         - AdminKey: []
@@ -126,6 +130,7 @@ paths:
           description: Missing or invalid admin key
   /v1/internal/seed-lessons:
     post:
+      operationId: seedLessons
       summary: Seed or upsert lessons for a track
       security:
         - AdminKey: []
