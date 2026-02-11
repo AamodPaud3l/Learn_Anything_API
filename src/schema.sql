@@ -11,6 +11,9 @@ CREATE TABLE IF NOT EXISTS tracks (
   slug TEXT UNIQUE NOT NULL,              -- e.g. "python", "docker"
   title TEXT NOT NULL,                    -- e.g. "Python"
   official_sources JSONB NOT NULL DEFAULT '[]'::jsonb,
+  track_type TEXT NOT NULL DEFAULT 'custom' CHECK (track_type IN ('official', 'custom')),
+  owner_user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+  status TEXT NOT NULL DEFAULT 'draft' CHECK (status IN ('draft', 'active', 'archived')),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
