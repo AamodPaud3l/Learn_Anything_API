@@ -268,10 +268,20 @@ app.get("/v1/lessons/next", async (req, res) => {
   );
 
   // If no lesson exists yet, return a “needs seeding” response
+  const trackPayload = {
+    id: track.id,
+    slug: track.slug,
+    title: track.title,
+    official_sources: track.official_sources,
+    track_type: track.track_type,
+    owner_user_id: track.owner_user_id,
+    status: track.status
+  };
+
   if (lessonRes.rowCount === 0) {
     return res.json({
       user_id,
-      track: { slug: track.slug, title: track.title },
+      track: trackPayload,
       next_lesson: null,
       message: "No lessons found for this track yet. Seed lessons in the lessons table."
     });
@@ -279,7 +289,7 @@ app.get("/v1/lessons/next", async (req, res) => {
 
   res.json({
     user_id,
-    track: { slug: track.slug, title: track.title, official_sources: track.official_sources },
+    track: trackPayload,
     next_lesson: lessonRes.rows[0]
   });
 });
