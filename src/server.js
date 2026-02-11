@@ -3,7 +3,6 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const { z } = require("zod");
-const { v4: uuidv4 } = require("uuid");
 const db = require("./db");
 
 const app = express();
@@ -31,6 +30,20 @@ async function getTrackBySlug(slug) {
   return res.rows[0] || null;
 }
 
+function requireAdminKey(req, res, next) {
+  const configuredKey = process.env.ADMIN_KEY;
+  if (!configuredKey) {
+    return res.status(500).json({ error: "ADMIN_KEY is not configured on the server." });
+  }
+
+  const providedKey = req.header("X-ADMIN-KEY");
+  if (providedKey !== configuredKey) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  return next();
+}
+
 // ---------- routes ----------
 app.get("/health", (req, res) => {
   res.json({ ok: true, message: "API is alive 🫡" });
@@ -38,7 +51,11 @@ app.get("/health", (req, res) => {
 
 // List tracks
 app.get("/v1/tracks", async (req, res) => {
-  const tracks = await db.query(`SELECT id, slug, title, official_sources FROM tracks ORDER BY title`);
+  const tracks = await db.query(`
+    SELECT id, slug, title, official_sources, track_type, owner_user_id, status
+    FROM tracks
+    ORDER BY title
+  `);
   res.json({ tracks: tracks.rows });
 });
 
@@ -59,12 +76,127 @@ app.post("/v1/tracks", async (req, res) => {
     const created = await db.query(
       `INSERT INTO tracks (slug, title, official_sources)
        VALUES ($1, $2, $3::jsonb)
-       RETURNING id, slug, title, official_sources`,
+       RETURNING id, slug, title, official_sources, track_type, owner_user_id, status`,
       [slug.toLowerCase(), title, JSON.stringify(official_sources)]
     );
     res.status(201).json({ track: created.rows[0] });
   } catch (e) {
     res.status(400).json({ error: "Track slug already exists or invalid data." });
+  }
+});
+
+app.use("/v1/internal", requireAdminKey);
+
+app.post("/v1/internal/ensure-track", async (req, res) => {
+  const schema = z.object({
+    slug: z.string().min(2).max(50),
+    title: z.string().min(2).max(100),
+    official_sources: z.array(z.string().url()).default([]),
+    track_type: z.enum(["official", "custom"]).default("custom"),
+    owner_user_id: z.string().uuid().nullable().optional(),
+    status: z.enum(["draft", "active", "archived"]).default("draft")
+  });
+
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  const payload = parsed.data;
+  const slug = payload.slug.toLowerCase();
+
+  try {
+    if (payload.owner_user_id) {
+      await ensureUser(payload.owner_user_id);
+    }
+
+    const existing = await db.query(`SELECT id FROM tracks WHERE slug = $1`, [slug]);
+
+    const saved = await db.query(
+      `INSERT INTO tracks (slug, title, official_sources, track_type, owner_user_id, status)
+       VALUES ($1, $2, $3::jsonb, $4, $5, $6)
+       ON CONFLICT (slug) DO UPDATE
+       SET title = EXCLUDED.title,
+           official_sources = EXCLUDED.official_sources,
+           track_type = EXCLUDED.track_type,
+           owner_user_id = EXCLUDED.owner_user_id,
+           status = EXCLUDED.status
+       RETURNING id, slug, title, official_sources, track_type, owner_user_id, status`,
+      [
+        slug,
+        payload.title,
+        JSON.stringify(payload.official_sources),
+        payload.track_type,
+        payload.owner_user_id ?? null,
+        payload.status
+      ]
+    );
+
+    return res.status(existing.rowCount === 0 ? 201 : 200).json({
+      created: existing.rowCount === 0,
+      track: saved.rows[0]
+    });
+  } catch (e) {
+    return res.status(400).json({ error: "Unable to ensure track." });
+  }
+});
+
+app.post("/v1/internal/seed-lessons", async (req, res) => {
+  const schema = z.object({
+    track_slug: z.string().min(2).max(50),
+    lessons: z.array(
+      z.object({
+        lesson_order: z.number().int().positive(),
+        title: z.string().min(2).max(160),
+        objectives: z.array(z.string()).default([]),
+        tags: z.array(z.string()).default([]),
+        source_urls: z.array(z.string().url()).default([])
+      })
+    ).min(1)
+  });
+
+  const parsed = schema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() });
+
+  const payload = parsed.data;
+  const track = await getTrackBySlug(payload.track_slug.toLowerCase());
+  if (!track) return res.status(404).json({ error: "Track not found" });
+
+  const seeded = [];
+
+  try {
+    await db.query("BEGIN");
+
+    for (const lesson of payload.lessons) {
+      const upserted = await db.query(
+        `INSERT INTO lessons (track_id, lesson_order, title, objectives, tags, source_urls)
+         VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb)
+         ON CONFLICT (track_id, lesson_order) DO UPDATE
+         SET title = EXCLUDED.title,
+             objectives = EXCLUDED.objectives,
+             tags = EXCLUDED.tags,
+             source_urls = EXCLUDED.source_urls
+         RETURNING id, lesson_order, title`,
+        [
+          track.id,
+          lesson.lesson_order,
+          lesson.title,
+          JSON.stringify(lesson.objectives),
+          JSON.stringify(lesson.tags),
+          JSON.stringify(lesson.source_urls)
+        ]
+      );
+      seeded.push(upserted.rows[0]);
+    }
+
+    await db.query("COMMIT");
+
+    return res.status(200).json({
+      track: { id: track.id, slug: track.slug, title: track.title },
+      inserted_or_updated: seeded.length,
+      lessons: seeded
+    });
+  } catch (e) {
+    await db.query("ROLLBACK");
+    return res.status(400).json({ error: "Unable to seed lessons" });
   }
 });
 
