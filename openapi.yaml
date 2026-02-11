@@ -1,9 +1,9 @@
 openapi: 3.1.0
 info:
   title: Learn Anything API
-  version: 1.2.0
+  version: 1.3.0
 servers:
-  - url: localhost:3000
+  - url: http://localhost:3000
 
 components:
   securitySchemes:
@@ -55,16 +55,24 @@ components:
         user_id: { type: string, format: uuid }
         attempts_7d: { type: integer }
         tip: { type: string }
-      required: [user_id]
+      required: [user_id, attempts_7d, tip]
+
+    NextLessonTrack:
+      type: object
+      properties:
+        slug: { type: string }
+        title: { type: string }
+        official_sources:
+          type: array
+          items: { type: string, format: uri }
+      required: [slug, title, official_sources]
 
     NextLessonResponse:
       type: object
       properties:
         user_id: { type: string, format: uuid }
         track:
-          # Your API may return a full Track or a lighter object.
-          # If it returns full Track, great. If it returns lite, switch this to TrackLite.
-          $ref: "#/components/schemas/Track"
+          $ref: "#/components/schemas/NextLessonTrack"
         next_lesson:
           type: ["object", "null"]
           properties:
@@ -80,7 +88,7 @@ components:
             source_urls:
               type: array
               items: { type: string, format: uri }
-          required: [id, lesson_order, title]
+          required: [id, lesson_order, title, objectives, tags, source_urls]
         message: { type: string }
       required: [user_id, track, next_lesson]
 
@@ -105,7 +113,7 @@ components:
       properties:
         user_id: { type: string, format: uuid }
         attempt_id: { type: string, format: uuid }
-        saved_at: { type: string }
+        saved_at: { type: string, format: date-time }
         advanced: { type: boolean }
       required: [user_id, attempt_id, saved_at, advanced]
 
@@ -124,6 +132,18 @@ paths:
                 properties:
                   ok: { type: boolean }
                   message: { type: string }
+
+  /openapi.yaml:
+    get:
+      operationId: getOpenApiSpec
+      summary: Download the OpenAPI schema used by GPT Actions
+      responses:
+        "200":
+          description: OpenAPI YAML
+          content:
+            application/yaml:
+              schema:
+                type: string
 
   /v1/me:
     get:
@@ -162,7 +182,9 @@ paths:
                       $ref: "#/components/schemas/Track"
     post:
       operationId: createTrack
-      summary: Create a track
+      summary: Create a track (admin only)
+      security:
+        - AdminKey: []
       requestBody:
         required: true
         content:
@@ -186,6 +208,8 @@ paths:
                 properties:
                   track:
                     $ref: "#/components/schemas/Track"
+        "401":
+          description: Missing or invalid admin key
 
   /v1/internal/ensure-track:
     post:

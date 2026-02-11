@@ -3,11 +3,42 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const { z } = require("zod");
+const path = require("path");
 const db = require("./db");
 
 const app = express();
+app.set("trust proxy", 1);
 app.use(cors());
 app.use(express.json());
+
+const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
+
+function createIpLimiter(maxRequests) {
+  const requestsByIp = new Map();
+
+  return function ipLimiter(req, res, next) {
+    const now = Date.now();
+    const key = req.ip || req.connection?.remoteAddress || "unknown";
+    const record = requestsByIp.get(key);
+
+    if (!record || now >= record.resetAt) {
+      requestsByIp.set(key, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
+      return next();
+    }
+
+    if (record.count >= maxRequests) {
+      const retryAfterSeconds = Math.ceil((record.resetAt - now) / 1000);
+      res.set("Retry-After", String(retryAfterSeconds));
+      return res.status(429).json({ error: "Too many requests" });
+    }
+
+    record.count += 1;
+    return next();
+  };
+}
+
+const publicLimiter = createIpLimiter(300);
+const adminLimiter = createIpLimiter(60);
 
 // ---------- helpers ----------
 async function ensureUser(userId) {
@@ -49,6 +80,17 @@ app.get("/health", (req, res) => {
   res.json({ ok: true, message: "API is alive 🫡" });
 });
 
+app.get("/openapi.yaml", (req, res) => {
+  return res.sendFile(path.join(__dirname, "..", "openapi.yaml"));
+});
+
+app.use((req, res, next) => {
+  if (req.path.startsWith("/v1/internal")) {
+    return next();
+  }
+  return publicLimiter(req, res, next);
+});
+
 // List tracks
 app.get("/v1/tracks", async (req, res) => {
   const tracks = await db.query(`
@@ -59,8 +101,8 @@ app.get("/v1/tracks", async (req, res) => {
   res.json({ tracks: tracks.rows });
 });
 
-// Create track (admin-ish; keep it open for MVP)
-app.post("/v1/tracks", async (req, res) => {
+// Create track (admin-only)
+app.post("/v1/tracks", requireAdminKey, async (req, res) => {
   const schema = z.object({
     slug: z.string().min(2).max(50),
     title: z.string().min(2).max(100),
@@ -85,7 +127,7 @@ app.post("/v1/tracks", async (req, res) => {
   }
 });
 
-app.use("/v1/internal", requireAdminKey);
+app.use("/v1/internal", adminLimiter, requireAdminKey);
 
 app.post("/v1/internal/ensure-track", async (req, res) => {
   const schema = z.object({
@@ -145,8 +187,17 @@ app.post("/v1/internal/ensure-track", async (req, res) => {
       ]
     );
 
-    return res.status(existing.rowCount === 0 ? 201 : 200).json({
-      created: existing.rowCount === 0,
+    const created = existing.rowCount === 0;
+    console.log(
+      JSON.stringify({
+        event: "ensure-track",
+        slug,
+        action: created ? "created" : "updated"
+      })
+    );
+
+    return res.status(created ? 201 : 200).json({
+      created,
       track: saved.rows[0]
     });
   } catch (e) {
@@ -176,12 +227,25 @@ app.post("/v1/internal/seed-lessons", async (req, res) => {
   if (!track) return res.status(404).json({ error: "Track not found" });
 
   const seeded = [];
+  let updatedCount = 0;
   const client = await db.getClient();
 
   try {
     await client.query("BEGIN");
 
+    const lessonOrders = payload.lessons.map((lesson) => lesson.lesson_order);
+    const existingLessons = await client.query(
+      `SELECT lesson_order
+       FROM lessons
+       WHERE track_id = $1 AND lesson_order = ANY($2::int[])`,
+      [track.id, lessonOrders]
+    );
+    const existingOrderSet = new Set(existingLessons.rows.map((row) => row.lesson_order));
+
     for (const lesson of payload.lessons) {
+      if (existingOrderSet.has(lesson.lesson_order)) {
+        updatedCount += 1;
+      }
       const upserted = await client.query(
         `INSERT INTO lessons (track_id, lesson_order, title, objectives, tags, source_urls)
          VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6::jsonb)
@@ -204,6 +268,16 @@ app.post("/v1/internal/seed-lessons", async (req, res) => {
     }
 
     await client.query("COMMIT");
+
+    const insertedCount = seeded.length - updatedCount;
+    console.log(
+      JSON.stringify({
+        event: "seed-lessons",
+        track_slug: payload.track_slug.toLowerCase(),
+        inserted: insertedCount,
+        updated: updatedCount
+      })
+    );
 
     return res.status(200).json({
       track: { id: track.id, slug: track.slug, title: track.title },
@@ -271,7 +345,7 @@ app.get("/v1/lessons/next", async (req, res) => {
   if (lessonRes.rowCount === 0) {
     return res.json({
       user_id,
-      track: { slug: track.slug, title: track.title },
+      track: { slug: track.slug, title: track.title, official_sources: track.official_sources },
       next_lesson: null,
       message: "No lessons found for this track yet. Seed lessons in the lessons table."
     });
@@ -344,6 +418,15 @@ app.post("/v1/attempts", async (req, res) => {
       advanced = true;
     }
   }
+
+  console.log(
+    JSON.stringify({
+      event: "submit-attempt",
+      user_id,
+      lesson_id: body.lesson_id,
+      advanced
+    })
+  );
 
   res.json({
     user_id,

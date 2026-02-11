@@ -1,48 +1,114 @@
-# Learn_Anything_API
+# Learn Anything API
 
-Express + Postgres API for generating learning tracks, lessons, and progress for a custom GPT workflow.
+A Duolingo-style learning backend built for GPT Actions. It lets a GPT create structured tracks and lessons, then track learner progress via attempts and lesson advancement.
 
-## Local setup
+## Architecture
+
+```text
+GPT Actions client -> Learn Anything API (Express) -> Neon Postgres
+                                     \
+                                      -> Render deployment
+```
+
+- **API**: Express (CommonJS)
+- **Database**: Postgres (Neon)
+- **Deployment**: Render
+- **Contract**: OpenAPI 3.1 (`openapi.yaml`), also served from `GET /openapi.yaml`
+
+## Security model
+
+- `X-ADMIN-KEY` (from `ADMIN_KEY`) is required for:
+  - `POST /v1/tracks`
+  - `POST /v1/internal/ensure-track`
+  - `POST /v1/internal/seed-lessons`
+- Read endpoints stay public (`/health`, `/v1/me`, `/v1/tracks`, `/v1/lessons/next`).
+- In-memory IP rate limits are applied:
+  - General public routes: 300 requests / 15 minutes
+  - Internal admin routes: 60 requests / 15 minutes
+- `trust proxy` is enabled for Render-compatible client IP handling.
+
+## Quickstart
 
 1. Install dependencies:
    ```bash
    npm install
    ```
-2. Create `.env` (example):
+2. Create `.env`:
    ```env
    DATABASE_URL=postgres://postgres:postgres@localhost:5432/learn_anything
    PORT=3000
-   ADMIN_KEY=change-me
+   ADMIN_KEY=replace-with-strong-admin-key
    ```
-3. Initialize schema:
+3. Initialize DB schema + migration:
    ```bash
    psql "$DATABASE_URL" -f src/schema.sql
-   ```
-4. Run migration for track admin metadata:
-   ```bash
    psql "$DATABASE_URL" -f migrations/001_add_track_admin_columns.sql
    ```
-5. Start API:
+4. Start API:
    ```bash
-   npm run dev
+   npm start
    ```
 
 ## OpenAPI
 
-OpenAPI 3.1 schema is available at:
+- Source file: `openapi.yaml`
+- Runtime route: `GET /openapi.yaml`
 
-- `openapi.yaml`
+## Demo seeding script (idempotent)
 
-Internal endpoints require `X-ADMIN-KEY` header.
+Seed one demo track + three lessons:
 
-## Internal admin endpoints
+```bash
+npm run seed
+```
 
-### Ensure a track exists
+This script is idempotent and can be run multiple times safely.
+
+## cURL examples
+
+### Health
+
+```bash
+curl http://localhost:3000/health
+```
+
+### Get/OpenAPI schema
+
+```bash
+curl http://localhost:3000/openapi.yaml
+```
+
+### Get current user
+
+```bash
+curl "http://localhost:3000/v1/me"
+```
+
+### List tracks
+
+```bash
+curl http://localhost:3000/v1/tracks
+```
+
+### Create track (admin-only)
+
+```bash
+curl -X POST http://localhost:3000/v1/tracks \
+  -H "Content-Type: application/json" \
+  -H "X-ADMIN-KEY: <ADMIN_KEY>" \
+  -d '{
+    "slug": "python",
+    "title": "Python",
+    "official_sources": ["https://docs.python.org/3/"]
+  }'
+```
+
+### Ensure track (internal admin)
 
 ```bash
 curl -X POST http://localhost:3000/v1/internal/ensure-track \
   -H "Content-Type: application/json" \
-  -H "X-ADMIN-KEY: $ADMIN_KEY" \
+  -H "X-ADMIN-KEY: <ADMIN_KEY>" \
   -d '{
     "slug": "python",
     "title": "Python",
@@ -53,12 +119,12 @@ curl -X POST http://localhost:3000/v1/internal/ensure-track \
   }'
 ```
 
-### Seed lessons for a track
+### Seed lessons (internal admin)
 
 ```bash
 curl -X POST http://localhost:3000/v1/internal/seed-lessons \
   -H "Content-Type: application/json" \
-  -H "X-ADMIN-KEY: $ADMIN_KEY" \
+  -H "X-ADMIN-KEY: <ADMIN_KEY>" \
   -d '{
     "track_slug": "python",
     "lessons": [
@@ -73,13 +139,23 @@ curl -X POST http://localhost:3000/v1/internal/seed-lessons \
   }'
 ```
 
-## Existing API endpoints
+### Get next lesson
 
-- `GET /health`
-- `GET /v1/tracks`
-- `POST /v1/tracks`
-- `GET /v1/me`
-- `GET /v1/lessons/next`
-- `POST /v1/attempts`
-- `POST /v1/internal/ensure-track` (admin key required)
-- `POST /v1/internal/seed-lessons` (admin key required)
+```bash
+curl "http://localhost:3000/v1/lessons/next?track=python"
+```
+
+### Submit attempt
+
+```bash
+curl -X POST http://localhost:3000/v1/attempts \
+  -H "Content-Type: application/json" \
+  -d '{
+    "lesson_id": "<LESSON_ID>",
+    "attempt_type": "quiz",
+    "score": 8,
+    "max_score": 10,
+    "duration_sec": 240,
+    "weak_tags": ["loops"]
+  }'
+```
