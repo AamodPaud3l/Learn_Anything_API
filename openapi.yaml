@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Learn Anything API
-  version: 1.1.0
+  version: 1.2.0
 servers:
   - url: http://localhost:3000
 components:
@@ -30,6 +30,7 @@ components:
           type: string
           enum: [draft, active, archived]
       required: [id, slug, title, official_sources, track_type, status]
+
     LessonSeedInput:
       type: object
       properties:
@@ -45,20 +46,83 @@ components:
           type: array
           items: { type: string, format: uri }
       required: [lesson_order, title]
+
+    MeResponse:
+      type: object
+      properties:
+        user_id: { type: string, format: uuid }
+        attempts_7d: { type: integer }
+        tip: { type: string }
+      required: [user_id]
+
+    NextLessonResponse:
+      type: object
+      properties:
+        user_id: { type: string, format: uuid }
+        track:
+          $ref: '#/components/schemas/Track'
+        next_lesson:
+          type: ['object', 'null']
+          properties:
+            id: { type: string, format: uuid }
+            lesson_order: { type: integer }
+            title: { type: string }
+            objectives:
+              type: array
+              items: { type: string }
+            tags:
+              type: array
+              items: { type: string }
+            source_urls:
+              type: array
+              items: { type: string, format: uri }
+          required: [id, lesson_order, title]
+        message: { type: string }
+      required: [user_id, track, next_lesson]
+
+    SubmitAttemptInput:
+      type: object
+      properties:
+        user_id: { type: string, format: uuid }
+        lesson_id: { type: string, format: uuid }
+        attempt_type:
+          type: string
+          enum: [quiz, challenge, project]
+        score: { type: number }
+        max_score: { type: number }
+        duration_sec: { type: integer }
+        weak_tags:
+          type: array
+          items: { type: string }
+      required: [lesson_id, attempt_type]
+
+    SubmitAttemptResponse:
+      type: object
+      properties:
+        user_id: { type: string, format: uuid }
+        attempt_id: { type: string, format: uuid }
+        saved_at: { type: string, format: date-time }
+        advanced: { type: boolean }
+      required: [user_id, attempt_id, saved_at, advanced]
+
 paths:
   /health:
     get:
+      operationId: getHealth
       summary: Health check
       responses:
         '200':
           description: API status
+
   /v1/tracks:
     get:
+      operationId: listTracks
       summary: List tracks
       responses:
         '200':
           description: Tracks list
     post:
+      operationId: createTrack
       summary: Create a track
       requestBody:
         required: true
@@ -76,8 +140,10 @@ paths:
       responses:
         '201':
           description: Track created
+
   /v1/internal/ensure-track:
     post:
+      operationId: ensureTrack
       summary: Create or update a track by slug
       security:
         - AdminKey: []
@@ -124,8 +190,10 @@ paths:
           description: Track created
         '401':
           description: Missing or invalid admin key
+
   /v1/internal/seed-lessons:
     post:
+      operationId: seedLessons
       summary: Seed or upsert lessons for a track
       security:
         - AdminKey: []
@@ -156,3 +224,71 @@ paths:
           description: Missing or invalid admin key
         '404':
           description: Track not found
+
+  /v1/me:
+    get:
+      operationId: getMe
+      summary: Get or create the current user (MVP uses user_id query param)
+      parameters:
+        - in: query
+          name: user_id
+          required: false
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: User dashboard
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeResponse'
+
+  /v1/lessons/next:
+    get:
+      operationId: getNextLesson
+      summary: Get next lesson for a user in a track
+      parameters:
+        - in: query
+          name: track
+          required: true
+          schema: { type: string }
+          description: Track slug
+        - in: query
+          name: user_id
+          required: false
+          schema:
+            type: string
+            format: uuid
+          description: If missing, API may create a new user.
+      responses:
+        '200':
+          description: Next lesson payload or null if none exists
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NextLessonResponse'
+        '404':
+          description: Track not found
+
+  /v1/attempts:
+    post:
+      operationId: submitAttempt
+      summary: Store a quiz/challenge/project attempt; may advance lesson if passed
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SubmitAttemptInput'
+      responses:
+        '200':
+          description: Attempt saved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SubmitAttemptResponse'
+        '400':
+          description: Invalid input
+        '404':
+          description: Lesson not found
