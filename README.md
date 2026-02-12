@@ -34,6 +34,32 @@ GPT Actions client -> Learn Anything API (Express) -> Neon Postgres
 - `learner_id` is currently the same value as `user_id` for backward compatibility.
 - Privacy note: no personal data is stored. Progress is linked only to the Learner ID.
 
+## Security limitations (MVP)
+
+This MVP intentionally does **not** use OAuth. That keeps setup simple, but it introduces known security limitations that you should accept explicitly before production use:
+
+- Learner identity is currently possession-based (`learner_id` UUID). If a UUID is leaked/shared, another client can read or submit progress for that learner.
+- Current rate limiting is in-memory per process, so protection is basic and not coordinated across multiple instances.
+- Database TLS currently allows non-strict certificate verification in code; this should be hardened for stricter environments.
+
+### Prioritized patch plan (preserving no OAuth)
+
+1. **P0 — Harden DB transport security**
+   - Enforce strict TLS verification for Postgres in production environments (provider-recommended CA/cert settings).
+
+2. **P1 — Add signed learner proof (no OAuth)**
+   - Keep UUID `learner_id` UX, but also issue an HMAC-signed token from `/v1/me` (bound to `learner_id` + expiry).
+   - Require that signature on write/progress routes (`/v1/lessons/next`, `/v1/attempts`) to prevent easy UUID-only hijacking.
+
+3. **P1 — Move rate limiting to shared storage/edge**
+   - Keep current limits but back them with Redis or platform edge controls so limits persist across restarts/instances.
+
+4. **P2 — Reduce identifier leakage in logs**
+   - Avoid logging raw learner IDs where not necessary; use hashed/shortened request-correlation identifiers.
+
+5. **P2 — Tighten CORS for known clients**
+   - If frontend origins are known, restrict CORS allowlist instead of allowing all origins by default.
+
 ## Quickstart
 
 1. Install dependencies:
