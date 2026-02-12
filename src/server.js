@@ -78,6 +78,23 @@ function getUserIdFromQuery(req, res) {
 
   if (!hasLearnerId && !hasUserId) return null;
 
+  if (hasLearnerId && hasUserId) {
+    const parsedLearnerId = z.string().uuid().safeParse(req.query.learner_id);
+    const parsedUserId = z.string().uuid().safeParse(req.query.user_id);
+
+    if (!parsedLearnerId.success || !parsedUserId.success) {
+      res.status(400).json({ error: "learner_id/user_id must be a valid UUID" });
+      return null;
+    }
+
+    if (parsedLearnerId.data !== parsedUserId.data) {
+      res.status(400).json({ error: "learner_id and user_id must match when both are provided" });
+      return null;
+    }
+
+    return parsedLearnerId.data;
+  }
+
   const selectedId = hasLearnerId ? req.query.learner_id : req.query.user_id;
   const parsed = z.string().uuid().safeParse(selectedId);
   if (!parsed.success) {

@@ -32,6 +32,7 @@ GPT Actions client -> Learn Anything API (Express) -> Neon Postgres
 - No OAuth is used by design in this MVP.
 - Learners resume progress using a **Learner ID** (a full UUID).
 - `learner_id` is currently the same value as `user_id` for backward compatibility.
+- If both `learner_id` and `user_id` are provided in query params, they must be the same UUID or the API returns `400`.
 - Privacy note: no personal data is stored. Progress is linked only to the Learner ID.
 
 ## Security limitations (MVP)
