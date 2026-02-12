@@ -15,9 +15,20 @@ const RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000;
 
 function createIpLimiter(maxRequests) {
   const requestsByIp = new Map();
+  let nextCleanupAt = Date.now() + RATE_LIMIT_WINDOW_MS;
 
   return function ipLimiter(req, res, next) {
     const now = Date.now();
+
+    if (now >= nextCleanupAt) {
+      for (const [ip, value] of requestsByIp.entries()) {
+        if (now >= value.resetAt) {
+          requestsByIp.delete(ip);
+        }
+      }
+      nextCleanupAt = now + RATE_LIMIT_WINDOW_MS;
+    }
+
     const key = req.ip || req.connection?.remoteAddress || "unknown";
     const record = requestsByIp.get(key);
 
@@ -76,19 +87,19 @@ function requireAdminKey(req, res, next) {
 }
 
 // ---------- routes ----------
+app.use((req, res, next) => {
+  if (req.path.startsWith("/v1/internal")) {
+    return next();
+  }
+  return publicLimiter(req, res, next);
+});
+
 app.get("/health", (req, res) => {
   res.json({ ok: true, message: "API is alive 🫡" });
 });
 
 app.get("/openapi.yaml", (req, res) => {
   return res.sendFile(path.join(__dirname, "..", "openapi.yaml"));
-});
-
-app.use((req, res, next) => {
-  if (req.path.startsWith("/v1/internal")) {
-    return next();
-  }
-  return publicLimiter(req, res, next);
 });
 
 // List tracks
