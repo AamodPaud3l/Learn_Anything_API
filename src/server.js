@@ -400,7 +400,7 @@ app.get("/v1/resume", async (req, res) => {
     return res.status(400).json({ error: "learner_id must be a valid UUID" });
   }
 
-  const learner_id = await ensureUser(parsedLearnerId.data);
+  const learner_id = parsedLearnerId.data;
 
   const recentActivity = await db.query(
     `SELECT
