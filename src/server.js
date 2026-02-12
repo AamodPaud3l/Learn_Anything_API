@@ -404,16 +404,27 @@ app.get("/v1/resume", async (req, res) => {
 
   const recentActivity = await db.query(
     `SELECT
-       t.slug AS track_slug,
-       t.title AS track_title,
-       MAX(a.created_at) AS last_attempt_at,
-       MAX(l.lesson_order)::int AS last_lesson_order
-     FROM attempts a
-     JOIN lessons l ON l.id = a.lesson_id
-     JOIN tracks t ON t.id = l.track_id
-     WHERE a.user_id = $1
-     GROUP BY t.slug, t.title
-     ORDER BY MAX(a.created_at) DESC
+       ranked.track_slug,
+       ranked.track_title,
+       ranked.last_attempt_at,
+       ranked.last_lesson_order
+     FROM (
+       SELECT
+         t.slug AS track_slug,
+         t.title AS track_title,
+         a.created_at AS last_attempt_at,
+         l.lesson_order::int AS last_lesson_order,
+         ROW_NUMBER() OVER (
+           PARTITION BY t.id
+           ORDER BY a.created_at DESC, a.id DESC
+         ) AS row_num
+       FROM attempts a
+       JOIN lessons l ON l.id = a.lesson_id
+       JOIN tracks t ON t.id = l.track_id
+       WHERE a.user_id = $1
+     ) ranked
+     WHERE ranked.row_num = 1
+     ORDER BY ranked.last_attempt_at DESC
      LIMIT 10`,
     [learner_id]
   );
