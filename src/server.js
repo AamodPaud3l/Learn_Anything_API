@@ -72,6 +72,39 @@ async function getTrackBySlug(slug) {
   return res.rows[0] || null;
 }
 
+function getUserIdFromQuery(req, res) {
+  const hasLearnerId = Object.prototype.hasOwnProperty.call(req.query, "learner_id");
+  const hasUserId = Object.prototype.hasOwnProperty.call(req.query, "user_id");
+
+  if (!hasLearnerId && !hasUserId) return null;
+
+  if (hasLearnerId && hasUserId) {
+    const parsedLearnerId = z.string().uuid().safeParse(req.query.learner_id);
+    const parsedUserId = z.string().uuid().safeParse(req.query.user_id);
+
+    if (!parsedLearnerId.success || !parsedUserId.success) {
+      res.status(400).json({ error: "learner_id/user_id must be a valid UUID" });
+      return null;
+    }
+
+    if (parsedLearnerId.data !== parsedUserId.data) {
+      res.status(400).json({ error: "learner_id and user_id must match when both are provided" });
+      return null;
+    }
+
+    return parsedLearnerId.data;
+  }
+
+  const selectedId = hasLearnerId ? req.query.learner_id : req.query.user_id;
+  const parsed = z.string().uuid().safeParse(selectedId);
+  if (!parsed.success) {
+    res.status(400).json({ error: "learner_id/user_id must be a valid UUID" });
+    return null;
+  }
+
+  return parsed.data;
+}
+
 function requireAdminKey(req, res, next) {
   const configuredKey = process.env.ADMIN_KEY;
   if (!configuredKey) {
@@ -305,7 +338,12 @@ app.post("/v1/internal/seed-lessons", async (req, res) => {
 
 // "Me" dashboard (MVP: user_id passed)
 app.get("/v1/me", async (req, res) => {
-  const user_id = await ensureUser(req.query.user_id);
+  const parsedUserId = getUserIdFromQuery(req, res);
+  const hasLearnerId = Object.prototype.hasOwnProperty.call(req.query, "learner_id");
+  const hasUserId = Object.prototype.hasOwnProperty.call(req.query, "user_id");
+  if ((hasUserId || hasLearnerId) && !parsedUserId) return;
+
+  const user_id = await ensureUser(parsedUserId);
 
   // Streak/basic activity (simple: count attempts in last 7 days)
   const attempts = await db.query(
@@ -317,6 +355,9 @@ app.get("/v1/me", async (req, res) => {
 
   res.json({
     user_id,
+    learner_id: user_id,
+    message: "Save this Learner ID to resume later.",
+    privacy_note: "No personal data is stored. Progress is linked only to your Learner ID.",
     attempts_7d: attempts.rows[0].attempts_7d,
     tip: "MVP mode: progress is stored. Later we’ll add login (OAuth) so users don’t need user_id."
   });
@@ -327,7 +368,12 @@ app.get("/v1/lessons/next", async (req, res) => {
   const trackSlug = req.query.track;
   if (!trackSlug) return res.status(400).json({ error: "Missing ?track=slug" });
 
-  const user_id = await ensureUser(req.query.user_id);
+  const parsedUserId = getUserIdFromQuery(req, res);
+  const hasLearnerId = Object.prototype.hasOwnProperty.call(req.query, "learner_id");
+  const hasUserId = Object.prototype.hasOwnProperty.call(req.query, "user_id");
+  if ((hasUserId || hasLearnerId) && !parsedUserId) return;
+
+  const user_id = await ensureUser(parsedUserId);
   const track = await getTrackBySlug(trackSlug.toLowerCase());
   if (!track) return res.status(404).json({ error: "Track not found" });
 
@@ -366,6 +412,49 @@ app.get("/v1/lessons/next", async (req, res) => {
     user_id,
     track: { slug: track.slug, title: track.title, official_sources: track.official_sources },
     next_lesson: lessonRes.rows[0]
+  });
+});
+
+app.get("/v1/resume", async (req, res) => {
+  const parsedLearnerId = z.string().uuid().safeParse(req.query.learner_id);
+  if (!parsedLearnerId.success) {
+    return res.status(400).json({ error: "learner_id must be a valid UUID" });
+  }
+
+  const learner_id = parsedLearnerId.data;
+
+  const recentActivity = await db.query(
+    `SELECT
+       recent.track_slug,
+       recent.track_title,
+       recent.last_attempt_at,
+       recent.last_lesson_order
+     FROM (
+       SELECT DISTINCT ON (t.id)
+         t.slug AS track_slug,
+         t.title AS track_title,
+         a.created_at AS last_attempt_at,
+         l.lesson_order::int AS last_lesson_order
+       FROM attempts a
+       JOIN lessons l ON l.id = a.lesson_id
+       JOIN tracks t ON t.id = l.track_id
+       WHERE a.user_id = $1
+       ORDER BY t.id, a.created_at DESC, a.id DESC
+     ) recent
+     ORDER BY recent.last_attempt_at DESC
+     LIMIT 10`,
+    [learner_id]
+  );
+
+  const message =
+    recentActivity.rowCount === 0
+      ? "No activity yet. Start a lesson to begin tracking progress."
+      : "Resume from your most recent tracks.";
+
+  return res.json({
+    learner_id,
+    recent_activity: recentActivity.rows,
+    message
   });
 });
 

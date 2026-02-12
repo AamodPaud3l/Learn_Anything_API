@@ -53,9 +53,33 @@ components:
       type: object
       properties:
         user_id: { type: string, format: uuid }
+        learner_id: { type: string, format: uuid }
+        message: { type: string }
+        privacy_note: { type: string }
         attempts_7d: { type: integer }
         tip: { type: string }
-      required: [user_id, attempts_7d, tip]
+      required: [user_id, learner_id, message, privacy_note, attempts_7d, tip]
+
+    ResumeActivityItem:
+      type: object
+      properties:
+        track_slug: { type: string }
+        track_title: { type: string }
+        last_attempt_at: { type: string, format: date-time }
+        last_lesson_order:
+          type: [integer, "null"]
+      required: [track_slug, track_title, last_attempt_at, last_lesson_order]
+
+    ResumeResponse:
+      type: object
+      properties:
+        learner_id: { type: string, format: uuid }
+        recent_activity:
+          type: array
+          items:
+            $ref: "#/components/schemas/ResumeActivityItem"
+        message: { type: string }
+      required: [learner_id, recent_activity, message]
 
     NextLessonTrack:
       type: object
@@ -148,10 +172,16 @@ paths:
   /v1/me:
     get:
       operationId: getMe
-      summary: Get or create the current user (MVP via optional user_id query param)
+      summary: Get or create the current user (MVP via optional user_id or learner_id query param)
       parameters:
         - in: query
           name: user_id
+          required: false
+          schema:
+            type: string
+            format: uuid
+        - in: query
+          name: learner_id
           required: false
           schema:
             type: string
@@ -163,6 +193,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/MeResponse"
+        "400":
+          description: Invalid user_id or learner_id
 
   /v1/tracks:
     get:
@@ -328,6 +360,12 @@ paths:
           schema:
             type: string
             format: uuid
+        - in: query
+          name: learner_id
+          required: false
+          schema:
+            type: string
+            format: uuid
       responses:
         "200":
           description: Next lesson
@@ -335,8 +373,31 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/NextLessonResponse"
+        "400":
+          description: Invalid user_id or learner_id
         "404":
           description: Track not found
+
+  /v1/resume:
+    get:
+      operationId: resume
+      summary: Get a compact progress snapshot for a learner ID
+      parameters:
+        - in: query
+          name: learner_id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Resume snapshot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResumeResponse"
+        "400":
+          description: Invalid learner_id
 
   /v1/attempts:
     post:
