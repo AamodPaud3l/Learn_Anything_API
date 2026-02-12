@@ -41,7 +41,7 @@ This MVP intentionally does **not** use OAuth. That keeps setup simple, but it i
 
 - Learner identity is currently possession-based (`learner_id` UUID). If a UUID is leaked/shared, another client can read or submit progress for that learner.
 - Current rate limiting is in-memory per process, so protection is basic and not coordinated across multiple instances.
-- Database TLS currently allows non-strict certificate verification in code; this should be hardened for stricter environments.
+- Database TLS should stay enabled with certificate validation (`PG_SSL_MODE=require` or `verify-full`).
 
 ### Prioritized patch plan (preserving no OAuth)
 
@@ -70,6 +70,7 @@ This MVP intentionally does **not** use OAuth. That keeps setup simple, but it i
 2. Create `.env`:
    ```env
    DATABASE_URL=postgres://postgres:postgres@localhost:5432/learn_anything
+   PG_SSL_MODE=disable
    PORT=3000
    ADMIN_KEY=replace-with-strong-admin-key
    ```
@@ -82,6 +83,44 @@ This MVP intentionally does **not** use OAuth. That keeps setup simple, but it i
    ```bash
    npm start
    ```
+
+## Database TLS environment configuration
+
+`src/db.js` uses `PG_SSL_MODE` to decide TLS behavior:
+
+- `disable` → no TLS (local-only; blocked in production)
+- `require` → TLS enabled with certificate validation (`rejectUnauthorized: true`)
+- `verify-full` → TLS enabled with certificate validation (`rejectUnauthorized: true`)
+
+Optional provider-recommended certificate paths:
+
+- `PG_SSL_CA_PATH`
+- `PG_SSL_CERT_PATH`
+- `PG_SSL_KEY_PATH`
+
+### Render/Neon secure example
+
+```env
+NODE_ENV=production
+DATABASE_URL=postgres://USER:PASSWORD@HOST.neon.tech/DB?sslmode=require
+PG_SSL_MODE=verify-full
+# Optional if your provider asks for explicit cert files:
+# PG_SSL_CA_PATH=/etc/secrets/neon-ca.pem
+# PG_SSL_CERT_PATH=/etc/secrets/client-cert.pem
+# PG_SSL_KEY_PATH=/etc/secrets/client-key.pem
+ADMIN_KEY=replace-with-strong-admin-key
+PORT=10000
+```
+
+### Local development override example
+
+```env
+NODE_ENV=development
+DATABASE_URL=postgres://postgres:postgres@localhost:5432/learn_anything
+PG_SSL_MODE=disable
+ADMIN_KEY=replace-with-strong-admin-key
+PORT=3000
+```
 
 ## OpenAPI
 
