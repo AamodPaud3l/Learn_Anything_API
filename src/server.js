@@ -73,12 +73,12 @@ async function getTrackBySlug(slug) {
 }
 
 function getUserIdFromQuery(req, res) {
-  const learnerId = req.query.learner_id;
-  const userId = req.query.user_id;
-  const selectedId = learnerId || userId;
+  const hasLearnerId = Object.prototype.hasOwnProperty.call(req.query, "learner_id");
+  const hasUserId = Object.prototype.hasOwnProperty.call(req.query, "user_id");
 
-  if (!selectedId) return null;
+  if (!hasLearnerId && !hasUserId) return null;
 
+  const selectedId = hasLearnerId ? req.query.learner_id : req.query.user_id;
   const parsed = z.string().uuid().safeParse(selectedId);
   if (!parsed.success) {
     res.status(400).json({ error: "learner_id/user_id must be a valid UUID" });
@@ -322,7 +322,9 @@ app.post("/v1/internal/seed-lessons", async (req, res) => {
 // "Me" dashboard (MVP: user_id passed)
 app.get("/v1/me", async (req, res) => {
   const parsedUserId = getUserIdFromQuery(req, res);
-  if ((req.query.user_id || req.query.learner_id) && !parsedUserId) return;
+  const hasLearnerId = Object.prototype.hasOwnProperty.call(req.query, "learner_id");
+  const hasUserId = Object.prototype.hasOwnProperty.call(req.query, "user_id");
+  if ((hasUserId || hasLearnerId) && !parsedUserId) return;
 
   const user_id = await ensureUser(parsedUserId);
 
@@ -350,7 +352,9 @@ app.get("/v1/lessons/next", async (req, res) => {
   if (!trackSlug) return res.status(400).json({ error: "Missing ?track=slug" });
 
   const parsedUserId = getUserIdFromQuery(req, res);
-  if ((req.query.user_id || req.query.learner_id) && !parsedUserId) return;
+  const hasLearnerId = Object.prototype.hasOwnProperty.call(req.query, "learner_id");
+  const hasUserId = Object.prototype.hasOwnProperty.call(req.query, "user_id");
+  if ((hasUserId || hasLearnerId) && !parsedUserId) return;
 
   const user_id = await ensureUser(parsedUserId);
   const track = await getTrackBySlug(trackSlug.toLowerCase());
