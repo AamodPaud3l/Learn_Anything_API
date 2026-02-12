@@ -27,6 +27,13 @@ GPT Actions client -> Learn Anything API (Express) -> Neon Postgres
   - Internal admin routes: 60 requests / 15 minutes
 - `trust proxy` is enabled for Render-compatible client IP handling.
 
+## Authentication (MVP)
+
+- No OAuth is used by design in this MVP.
+- Learners resume progress using a **Learner ID** (a full UUID).
+- `learner_id` is currently the same value as `user_id` for backward compatibility.
+- Privacy note: no personal data is stored. Progress is linked only to the Learner ID.
+
 ## Quickstart
 
 1. Install dependencies:
@@ -78,7 +85,7 @@ curl http://localhost:3000/health
 curl http://localhost:3000/openapi.yaml
 ```
 
-### Get current user
+### Get current user / learner ID
 
 ```bash
 curl "http://localhost:3000/v1/me"
@@ -139,10 +146,16 @@ curl -X POST http://localhost:3000/v1/internal/seed-lessons \
   }'
 ```
 
+### Resume from a Learner ID
+
+```bash
+curl "http://localhost:3000/v1/resume?learner_id=<LEARNER_UUID>"
+```
+
 ### Get next lesson
 
 ```bash
-curl "http://localhost:3000/v1/lessons/next?track=python"
+curl "http://localhost:3000/v1/lessons/next?track=python&learner_id=<LEARNER_UUID>"
 ```
 
 ### Submit attempt
